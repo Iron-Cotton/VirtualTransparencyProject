@@ -129,6 +129,30 @@ ResearchApp/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ResearchApp.dir/build.make CMakeFiles/ResearchApp.dir/build
 .PHONY : ResearchApp/fast
 
+src/gpu_kernel.o: src/gpu_kernel.cu.o
+.PHONY : src/gpu_kernel.o
+
+# target to build an object file
+src/gpu_kernel.cu.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ResearchApp.dir/build.make CMakeFiles/ResearchApp.dir/src/gpu_kernel.cu.o
+.PHONY : src/gpu_kernel.cu.o
+
+src/gpu_kernel.i: src/gpu_kernel.cu.i
+.PHONY : src/gpu_kernel.i
+
+# target to preprocess a source file
+src/gpu_kernel.cu.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ResearchApp.dir/build.make CMakeFiles/ResearchApp.dir/src/gpu_kernel.cu.i
+.PHONY : src/gpu_kernel.cu.i
+
+src/gpu_kernel.s: src/gpu_kernel.cu.s
+.PHONY : src/gpu_kernel.s
+
+# target to generate assembly for a file
+src/gpu_kernel.cu.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/ResearchApp.dir/build.make CMakeFiles/ResearchApp.dir/src/gpu_kernel.cu.s
+.PHONY : src/gpu_kernel.cu.s
+
 src/main.o: src/main.cpp.o
 .PHONY : src/main.o
 
@@ -162,6 +186,9 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... ResearchApp"
+	@echo "... src/gpu_kernel.o"
+	@echo "... src/gpu_kernel.i"
+	@echo "... src/gpu_kernel.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
