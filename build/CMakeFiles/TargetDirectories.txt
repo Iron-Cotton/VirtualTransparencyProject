@@ -1,0 +1,3 @@
+/home/twatanabe/VirtualTransparencyProject/build/CMakeFiles/ResearchApp.dir
+/home/twatanabe/VirtualTransparencyProject/build/CMakeFiles/edit_cache.dir
+/home/twatanabe/VirtualTransparencyProject/build/CMakeFiles/rebuild_cache.dir
