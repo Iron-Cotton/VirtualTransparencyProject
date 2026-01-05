@@ -23,7 +23,7 @@ int main() {
     float elemPx = 60.0f;
     config.lensPitchX = elemPx * displayPitch;
     config.lensPitchY = elemPx * displayPitch;
-    config.centerDistance = 0.0068f; 
+    config.focalLength = 0.0068f; 
     config.numZPlane = 60;
     // ---------------------------------
 

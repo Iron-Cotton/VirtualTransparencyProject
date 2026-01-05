@@ -276,7 +276,7 @@ void runReconstructionKernel(
     // パラメータ取得
     float lensPitchX = config.lensPitchX > 0 ? config.lensPitchX : 0.001f;
     float lensPitchY = config.lensPitchY > 0 ? config.lensPitchY : 0.001f;
-    float focalLen = config.centerDistance > 0 ? config.centerDistance : 0.016f;
+    float focalLen = config.focalLength > 0 ? config.focalLength : 0.016f;
     float dispPitch = DISPLAY_PX_PITCH;
 
     // ★追加: 逆数の事前計算

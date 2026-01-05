@@ -10,8 +10,7 @@ struct AppConfig {
     bool isAlignmentMode = false; // true: 位置合わせ操作有効
 
     // ディスプレイ/レンズパラメータ
-    float focalLength = 0.0068f;
-    float centerDistance = 0.016f; // ギャップ(m)
+    float focalLength = 0.0068f; // ギャップ(m)
     
     // レンズピッチ
     float lensPitchX = 0.001f;
