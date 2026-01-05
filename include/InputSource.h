@@ -1,27 +1,15 @@
 #pragma once
 #include "Common.h"
 
-// インターフェース
-class IInputSource {
+// 入力ソースの基底クラス（インターフェース）
+class InputSource {
 public:
-    virtual ~IInputSource() = default;
+    virtual ~InputSource() {}
+
+    // 初期化（デバイスの開始やファイルの読み込み）
     virtual bool initialize() = 0;
-    // データを取得し、Host側の配列を埋める関数
+
+    // 更新（新しいフレームを取得してデータを詰める）
+    // 戻り値: 成功ならtrue
     virtual bool update(PointCloudData& outData) = 0;
-};
-
-// リアルタイム版
-class RealSenseSource : public IInputSource {
-    // rs2::pipeline などを保持
-public:
-    bool initialize() override;
-    bool update(PointCloudData& outData) override;
-};
-
-// 録画ファイル版
-class FileSource : public IInputSource {
-    // cv::VideoCapture などを保持
-public:
-    bool initialize() override;
-    bool update(PointCloudData& outData) override;
 };
