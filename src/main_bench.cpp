@@ -5,6 +5,7 @@
 #include <iostream>
 #include <chrono> // 時間計測用
 #include <cmath>
+#include <thread> // ★これを追加してください
 #include <cuda_runtime.h> // cudaDeviceSynchronize用
 
 int main() {
@@ -83,6 +84,13 @@ int main() {
         sumReconTime += reconMs;
         sumFrameTime += frameMs;
         frameCount++;
+
+        // ★追加: Sキーで保存
+        if (glfwGetKey(viewer.getWindow(), GLFW_KEY_S) == GLFW_PRESS) {
+            viewer.saveTexture("../images/screenshot.bmp");
+            // 連続保存を防ぐための簡易ウェイト（本来はフラグ管理が良いですが簡易的に）
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
 
         // 60フレームごとに平均時間を表示
         if (frameCount >= 60) {
