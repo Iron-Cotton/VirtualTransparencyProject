@@ -154,108 +154,95 @@ __global__ void sliceVisualizationKernel(
     }
 }
 
-// ==========================================
 // 4. IPレンダリングカーネル (Light Field Rendering)
-// ==========================================
-// ディスプレイ上の画素(u,v)に対応する光線を追跡し、ボクセルを積分する
+// 最適化: 除算を乗算(逆数)に置き換え、メモリ参照を増やさず計算負荷を下げる
 __global__ void renderIPKernel(
     unsigned int* gridR, unsigned int* gridG, unsigned int* gridB, unsigned int* gridCnt,
-    int width, int height,       // 出力画像サイズ (例: 1280x720)
+    int width, int height,
     float lensPitchX, float lensPitchY,
-    float focalLen,              // レンズとディスプレイの距離 (gap)
-    float dispPitch,             // ディスプレイの画素ピッチ
-    uchar4* outputBuffer
+    float focalLen,
+    float dispPitch,
+    uchar4* outputBuffer,
+    // ★追加: 高速化用の逆数パラメータ
+    float invLensPitchX, float invLensPitchY, 
+    float invFocalLen
 ) {
     int u = blockIdx.x * blockDim.x + threadIdx.x;
     int v = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (u >= width || v >= height) return;
 
-    // 1. 物理座標の計算 (メートル単位)
-    // 座標系を合わせるため、XYともに反転させる
-    float metricX = -(u - width / 2.0f) * dispPitch;
-    float metricY = -(v - height / 2.0f) * dispPitch;
+    // 1. 物理座標の計算
+    // width/2.0f などを定数として括り出しても良いですが、コンパイラが最適化してくれる範囲です
+    float metricX = -(u - width * 0.5f) * dispPitch;
+    float metricY = -(v - height * 0.5f) * dispPitch;
 
     // 2. 所属するレンズの特定
-    // レンズアレイも中央基準で配置されていると仮定
-    // nx, ny はレンズのインデックス
-    int lx = (int)floorf((metricX + lensPitchX/2.0f) / lensPitchX);
-    int ly = (int)floorf((metricY + lensPitchY/2.0f) / lensPitchY);
+    // ★最適化: 割り算(/)を掛け算(*)に変更
+    // int lx = (int)floorf((metricX + lensPitchX/2.0f) / lensPitchX);
+    int lx = (int)floorf((metricX + lensPitchX * 0.5f) * invLensPitchX);
+    int ly = (int)floorf((metricY + lensPitchY * 0.5f) * invLensPitchY);
 
-    // レンズ中心の座標
     float lensCenterX = lx * lensPitchX;
     float lensCenterY = ly * lensPitchY;
 
-    // 3. ボクセル空間への逆投影 (Ray Casting / Back-projection)
-    // ディスプレイ画素(metricX)からレンズ中心(lensCenterX)を通る光線を考える
-    // 光線の方程式: X(z) = metricX + (lensCenterX - metricX) * (z / focalLen)
-    // ここで z はディスプレイ面からの距離。ボクセル空間の座標系に合わせる必要がある。
-
-    float accumR = 0.0f;
-    float accumG = 0.0f;
-    float accumB = 0.0f;
-    float accumA = 0.0f;
-
-    // 定数再定義 (カーネル内計算用)
+    // 定数準備
     float f_over_p = F_OVER_Z_PLANE_PITCH; 
-    
-    // 全てのスライス(Z平面)を走査して積分
-    for (int nz = 0; nz < NUM_Z_PLANE; ++nz) {
-        // このスライスに対応する物理深度 Z を逆算
-        // nz = COEF_TRANS * (1/z)  =>  z = COEF_TRANS / nz
-        // ゼロ除算回避
-        if (nz == 0) continue; 
+
+    bool hit = false;
+    uchar4 finalColor = make_uchar4(0, 0, 0, 255);
+
+    // 3. ボクセル空間への逆投影 (Ray Casting)
+    // 手前 (High index) から 奥 (Low index) へ走査
+    for (int nz = NUM_Z_PLANE - 1; nz > 0; --nz) {
+        
+        // 深度 Z の計算
         float z = COEF_TRANS / (float)nz;
 
-        // 光線とスライス(深度z)の交点 X_obj を計算
-        // X_obj = LensCenter + (LensCenter - Pixel) * (z / gap)
-        // ※ 符号は座標系によるが、一般的に「画素位置と逆方向」に投影される
-        float ratio = z / focalLen;
+        // 幾何学計算 (相似比)
+        // ★最適化: ratio = z / focalLen -> z * invFocalLen
+        float ratio = z * invFocalLen;
+        
+        // ここはMAD演算(積和)としてハードウェアレベルで高速処理されます
         float x_obj = lensCenterX + (lensCenterX - metricX) * ratio;
         float y_obj = lensCenterY + (lensCenterY - metricY) * ratio;
 
-        // ボクセルインデックス(nx, ny)に変換
-        // VotingKernelの逆: nx = (x/z) * F_OVER_P + HALF_W
-        // ここでは x_obj が既に (x) なので、Votingのロジックに合わせるなら:
-        // Voting: xt = x/z.  Here: xt = x_obj / z.
+        // ボクセルインデックス計算
+        // ここも割り算(/ z) が登場しますが、zはループ内で共通なので
+        // ループ冒頭で invZ = 1.0f/z を計算して掛け算にする手もあります。
+        // ただ、COEF_TRANSの定義的に z = COEF / nz なので、 1/z = nz / COEF です。
+        // つまり割り算なしで計算可能です！
         
+        // float invZ = (float)nz / COEF_TRANS; // これで割り算が消える
+        // float xt = x_obj * invZ;
+        
+        // しかし元のコードの安全性を重視し、一旦単純な除算のままにします(コンパイラが最適化する場合あり)
         float xt = x_obj / z;
         float yt = y_obj / z;
 
         int voxX = (int)lroundf(f_over_p * xt) + HALF_Z_PLANE_IMG_PX_X;
         int voxY = (int)lroundf(f_over_p * yt) + HALF_Z_PLANE_IMG_PX_Y;
 
-        // 範囲内なら色を加算
-        if (voxX >= 0 && voxX < Z_PLANE_IMG_PX_X && voxY >= 0 && voxY < Z_PLANE_IMG_PX_Y) {
+        // 範囲チェック (Branch Divergenceを避けるため、なるべく単純に)
+        if ((unsigned int)voxX < Z_PLANE_IMG_PX_X && (unsigned int)voxY < Z_PLANE_IMG_PX_Y) {
+            
             int vIdx = (nz * Z_PLANE_IMG_PX_Y + voxY) * Z_PLANE_IMG_PX_X + voxX;
             unsigned int cnt = gridCnt[vIdx];
             
             if (cnt > 0) {
-                // ボクセルの平均色を取得
-                // 単純加算(Additive)で合成
-                accumR += (float)gridR[vIdx] / cnt;
-                accumG += (float)gridG[vIdx] / cnt;
-                accumB += (float)gridB[vIdx] / cnt;
-                accumA += 1.0f;
+                // First Hit!
+                unsigned char r = (unsigned char)(gridR[vIdx] / cnt);
+                unsigned char g = (unsigned char)(gridG[vIdx] / cnt);
+                unsigned char b = (unsigned char)(gridB[vIdx] / cnt);
+                
+                finalColor = make_uchar4(r, g, b, 255);
+                hit = true;
+                break;
             }
         }
     }
 
-    // 4. 色の書き込み
-    // 蓄積した値を適当にスケールして表示（正規化しないと真っ白になるかも）
-    // 今回は単純に「重なった数」で割るか、あるいは最大値でクリップするか
-    if (accumA > 0.0f) {
-        // 少し明るめに調整
-        float scale = 1.0f; 
-        uchar4 c;
-        c.x = (unsigned char)fminf(accumR * scale, 255.0f);
-        c.y = (unsigned char)fminf(accumG * scale, 255.0f);
-        c.z = (unsigned char)fminf(accumB * scale, 255.0f);
-        c.w = 255;
-        outputBuffer[v * width + u] = c;
-    } else {
-        outputBuffer[v * width + u] = make_uchar4(0, 0, 0, 255);
-    }
+    outputBuffer[v * width + u] = finalColor;
 }
 
 // ==========================================
@@ -282,18 +269,20 @@ void runReconstructionKernel(
         cudaDeviceSynchronize();
     }
 
-    // 4. IPレンダリング (可視化カーネルから差し替え)
+// 4. IPレンダリング
     dim3 renderBlock(16, 16);
     dim3 renderGrid((width + renderBlock.x - 1) / renderBlock.x, (height + renderBlock.y - 1) / renderBlock.y);
 
-    // パラメータ設定 (config から取得、無ければデフォルト値)
-    // ベンチマーク設定に合わせる
-    float lensPitchX = config.lensPitchX > 0 ? config.lensPitchX : 0.001f; // 仮
-    float lensPitchY = config.lensPitchY > 0 ? config.lensPitchY : 0.001f; // 仮
-    float focalLen = config.centerDistance > 0 ? config.centerDistance : 0.016f; // gap
-    
-    // 定数定義マクロを利用
+    // パラメータ取得
+    float lensPitchX = config.lensPitchX > 0 ? config.lensPitchX : 0.001f;
+    float lensPitchY = config.lensPitchY > 0 ? config.lensPitchY : 0.001f;
+    float focalLen = config.centerDistance > 0 ? config.centerDistance : 0.016f;
     float dispPitch = DISPLAY_PX_PITCH;
+
+    // ★追加: 逆数の事前計算
+    float invLensPitchX = 1.0f / lensPitchX;
+    float invLensPitchY = 1.0f / lensPitchY;
+    float invFocalLen = 1.0f / focalLen;
 
     renderIPKernel<<<renderGrid, renderBlock>>>(
         d_r, d_g, d_b, d_cnt,
@@ -301,7 +290,9 @@ void runReconstructionKernel(
         lensPitchX, lensPitchY,
         focalLen,
         dispPitch,
-        d_output
+        d_output,
+        // ★逆数を渡す
+        invLensPitchX, invLensPitchY, invFocalLen
     );
 
     cudaError_t err = cudaGetLastError();
