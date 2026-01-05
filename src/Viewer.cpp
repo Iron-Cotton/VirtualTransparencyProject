@@ -157,3 +157,80 @@ void GLViewer::cleanup() {
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
+
+// ★追加: BMP書き出しの実装
+void GLViewer::saveTexture(const std::string& filename) {
+    // 1. テクスチャのサイズを取得
+    glBindTexture(GL_TEXTURE_2D, displayTexture);
+    int w, h;
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &w);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &h);
+
+    // 2. ピクセルデータをGPUから読み出す
+    // RGBで取得 (BMPはパディングが必要だが、w=2400なら4の倍数なのでパディング不要)
+    std::vector<unsigned char> pixels(w * h * 3);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // 3. BMPヘッダの作成
+    unsigned char fileHeader[14] = {
+        'B','M',      // magic
+        0,0,0,0,      // size in bytes (後で埋める)
+        0,0,          // app data
+        0,0,          // app data
+        54,0,0,0      // start of data offset
+    };
+    unsigned char infoHeader[40] = {
+        40,0,0,0,     // info hd size
+        0,0,0,0,      // width (後で埋める)
+        0,0,0,0,      // height (後で埋める)
+        1,0,          // number color planes
+        24,0,         // bits per pixel
+        0,0,0,0,      // compression is none
+        0,0,0,0,      // image bits size
+        0,0,0,0,      // horz resolu
+        0,0,0,0,      // vert resolu
+        0,0,0,0,      // # colors in plt
+        0,0,0,0,      // # important colors
+    };
+
+    int fileSize = 54 + pixels.size();
+    fileHeader[ 2] = (unsigned char)(fileSize      );
+    fileHeader[ 3] = (unsigned char)(fileSize >>  8);
+    fileHeader[ 4] = (unsigned char)(fileSize >> 16);
+    fileHeader[ 5] = (unsigned char)(fileSize >> 24);
+
+    infoHeader[ 4] = (unsigned char)(w      );
+    infoHeader[ 5] = (unsigned char)(w >>  8);
+    infoHeader[ 6] = (unsigned char)(w >> 16);
+    infoHeader[ 7] = (unsigned char)(w >> 24);
+
+    infoHeader[ 8] = (unsigned char)(h      );
+    infoHeader[ 9] = (unsigned char)(h >>  8);
+    infoHeader[10] = (unsigned char)(h >> 16);
+    infoHeader[11] = (unsigned char)(h >> 24);
+
+    // 4. ファイル書き込み
+    std::ofstream f(filename, std::ios::out | std::ios::binary);
+    if (!f) {
+        std::cerr << "[Error] Failed to open file for saving: " << filename << std::endl;
+        return;
+    }
+
+    f.write(reinterpret_cast<char*>(fileHeader), 14);
+    f.write(reinterpret_cast<char*>(infoHeader), 40);
+
+    // BMPはBGR順、かつ上下反転している場合があるが、
+    // OpenGLのテクスチャ座標(左下原点)とBMP(左下原点)は相性が良いので
+    // 上下はそのままでOK。ただし色は RGB -> BGR 変換が必要。
+    for (int i = 0; i < pixels.size(); i += 3) {
+        unsigned char r = pixels[i];
+        unsigned char g = pixels[i+1];
+        unsigned char b = pixels[i+2];
+        unsigned char bgr[] = { b, g, r };
+        f.write(reinterpret_cast<char*>(bgr), 3);
+    }
+    
+    f.close();
+    std::cout << "[System] Screenshot saved to " << filename << " (" << w << "x" << h << ")" << std::endl;
+}

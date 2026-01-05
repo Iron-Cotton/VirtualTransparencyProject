@@ -19,7 +19,7 @@ private:
     PointCloudData cacheData;
 
     // 定数（提供されたコードに基づく）
-    const std::string IMAGE_PATH = "./images/standard/Parrots.bmp";
+    const std::string IMAGE_PATH = "../images/standard/Parrots.bmp";
     const int NUM_SUBJECT_POINTS_X = 554;
     const int NUM_SUBJECT_POINTS_Y = 554;
     const float SUBJECT_Z = 1.0f;
