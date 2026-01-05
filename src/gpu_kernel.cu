@@ -154,8 +154,10 @@ __global__ void sliceVisualizationKernel(
     }
 }
 
-// 4. IPレンダリングカーネル (Light Field Rendering)
-// 最適化: 除算を乗算(逆数)に置き換え、メモリ参照を増やさず計算負荷を下げる
+// ==========================================
+// 4. IPレンダリングカーネル (修正版)
+// OpenGLシェーダーのロジックを忠実に再現する
+// ==========================================
 __global__ void renderIPKernel(
     unsigned int* gridR, unsigned int* gridG, unsigned int* gridB, unsigned int* gridCnt,
     int width, int height,
@@ -163,8 +165,8 @@ __global__ void renderIPKernel(
     float focalLen,
     float dispPitch,
     uchar4* outputBuffer,
-    // ★追加: 高速化用の逆数パラメータ
-    float invLensPitchX, float invLensPitchY, 
+    float numLensX, float numLensY,  // 追加: レンズの総数
+    float elemPxX, float elemPxY,    // 追加: レンズ1つあたりのピクセル数
     float invFocalLen
 ) {
     int u = blockIdx.x * blockDim.x + threadIdx.x;
@@ -172,19 +174,43 @@ __global__ void renderIPKernel(
 
     if (u >= width || v >= height) return;
 
-    // 1. 物理座標の計算
-    // width/2.0f などを定数として括り出しても良いですが、コンパイラが最適化してくれる範囲です
-    float metricX = -(u - width * 0.5f) * dispPitch;
-    float metricY = -(v - height * 0.5f) * dispPitch;
+    // --- OpenGL Shader Logicの移植 ---
 
-    // 2. 所属するレンズの特定
-    // ★最適化: 割り算(/)を掛け算(*)に変更
-    // int lx = (int)floorf((metricX + lensPitchX/2.0f) / lensPitchX);
-    int lx = (int)floorf((metricX + lensPitchX * 0.5f) * invLensPitchX);
-    int ly = (int)floorf((metricY + lensPitchY * 0.5f) * invLensPitchY);
+    // 1. レンズインデックスの特定 (Pixel Grid Base)
+    // シェーダ: lIdx = floor(fragCoord / uElemPx);
+    float lx = floorf((float)u / elemPxX);
+    float ly = floorf((float)v / elemPxY);
 
-    float lensCenterX = lx * lensPitchX;
-    float lensCenterY = ly * lensPitchY;
+    // 範囲外チェック
+    if (lx < 0.0f || lx >= numLensX || ly < 0.0f || ly >= numLensY) {
+        outputBuffer[v * width + u] = make_uchar4(0, 0, 0, 255);
+        return;
+    }
+
+    // 2. レンズ中心(World)の計算
+    // シェーダ: lensCenterWorld = (lIdx - (uNumLens - 1.0) * 0.5) * uLensPitchPhy;
+    // これにより、レンズアレイ全体が原点を中心に配置されます
+    float lensCenterWorldX = (lx - (numLensX - 1.0f) * 0.5f) * lensPitchX;
+    float lensCenterWorldY = (ly - (numLensY - 1.0f) * 0.5f) * lensPitchY;
+
+    // 3. ピクセルオフセット(UV)の計算
+    // シェーダ: lensCenterPx = lIdx * uElemPx + uElemPx * 0.5;
+    // シェーダ: deltaPx = fragCoord - lensCenterPx;
+    // ※ fragCoord は画素中心(0.5, 1.5...) を指すが、CUDAのuは整数(0, 1...)
+    //    厳密に合わせるなら u + 0.5f だが、ここでは相対位置が重要。
+    //    CPU版と完全に合わせるため、画素中心として +0.5f を考慮する
+    float currentPxX = (float)u + 0.5f;
+    float currentPxY = (float)v + 0.5f;
+
+    float lensCenterPxX = lx * elemPxX + elemPxX * 0.5f;
+    float lensCenterPxY = ly * elemPxY + elemPxY * 0.5f;
+
+    float deltaPxX = currentPxX - lensCenterPxX;
+    float deltaPxY = currentPxY - lensCenterPxY;
+
+    // シェーダ: vec2 uv = deltaPx * uDispPitch;
+    float uvX = deltaPxX * dispPitch;
+    float uvY = deltaPxY * dispPitch;
 
     // 定数準備
     float f_over_p = F_OVER_Z_PLANE_PITCH; 
@@ -192,56 +218,43 @@ __global__ void renderIPKernel(
     bool hit = false;
     uchar4 finalColor = make_uchar4(0, 0, 0, 255);
 
-    // 3. ボクセル空間への逆投影 (Ray Casting)
-    // 手前 (High index) から 奥 (Low index) へ走査
+    // 4. ボクセル空間への逆投影 (Ray Casting)
     for (int nz = NUM_Z_PLANE - 1; nz > 0; --nz) {
         
         // 深度 Z の計算
         float z = COEF_TRANS / (float)nz;
 
         // 幾何学計算 (相似比)
-        // ★最適化: ratio = z / focalLen -> z * invFocalLen
         float ratio = z * invFocalLen;
         
-        // ここはMAD演算(積和)としてハードウェアレベルで高速処理されます
-        float x_obj = lensCenterX + (lensCenterX - metricX) * ratio;
-        float y_obj = lensCenterY + (lensCenterY - metricY) * ratio;
+        // シェーダ: vec2 posAtZ = lensCenterWorld - uv * ratio;
+        // ※ピンホールカメラモデルのため、変位(uv)を反転させて投影面にマッピングする
+        float x_obj = lensCenterWorldX - uvX * ratio;
+        float y_obj = lensCenterWorldY - uvY * ratio;
 
         // ボクセルインデックス計算
-        // ここも割り算(/ z) が登場しますが、zはループ内で共通なので
-        // ループ冒頭で invZ = 1.0f/z を計算して掛け算にする手もあります。
-        // ただ、COEF_TRANSの定義的に z = COEF / nz なので、 1/z = nz / COEF です。
-        // つまり割り算なしで計算可能です！
-        
-        // float invZ = (float)nz / COEF_TRANS; // これで割り算が消える
-        // float xt = x_obj * invZ;
-        
-        // しかし元のコードの安全性を重視し、一旦単純な除算のままにします(コンパイラが最適化する場合あり)
         float xt = x_obj / z;
         float yt = y_obj / z;
 
         int voxX = (int)lroundf(f_over_p * xt) + HALF_Z_PLANE_IMG_PX_X;
         int voxY = (int)lroundf(f_over_p * yt) + HALF_Z_PLANE_IMG_PX_Y;
 
-        // 範囲チェック (Branch Divergenceを避けるため、なるべく単純に)
+        // 範囲チェック
         if ((unsigned int)voxX < Z_PLANE_IMG_PX_X && (unsigned int)voxY < Z_PLANE_IMG_PX_Y) {
             
             int vIdx = (nz * Z_PLANE_IMG_PX_Y + voxY) * Z_PLANE_IMG_PX_X + voxX;
             unsigned int cnt = gridCnt[vIdx];
             
             if (cnt > 0) {
-                // First Hit!
                 unsigned char r = (unsigned char)(gridR[vIdx] / cnt);
                 unsigned char g = (unsigned char)(gridG[vIdx] / cnt);
                 unsigned char b = (unsigned char)(gridB[vIdx] / cnt);
-                
                 finalColor = make_uchar4(r, g, b, 255);
                 hit = true;
                 break;
             }
         }
     }
-
     outputBuffer[v * width + u] = finalColor;
 }
 
@@ -250,7 +263,7 @@ __global__ void renderIPKernel(
 // ==========================================
 void runReconstructionKernel(
     PointCloudData& data, 
-    const AppConfig& config, // ここからパラメータをもらう
+    const AppConfig& config, 
     unsigned int* d_r, unsigned int* d_g, unsigned int* d_b, unsigned int* d_cnt,
     uchar4* d_output, 
     int width, int height
@@ -269,7 +282,7 @@ void runReconstructionKernel(
         cudaDeviceSynchronize();
     }
 
-// 4. IPレンダリング
+    // 4. IPレンダリング
     dim3 renderBlock(16, 16);
     dim3 renderGrid((width + renderBlock.x - 1) / renderBlock.x, (height + renderBlock.y - 1) / renderBlock.y);
 
@@ -279,9 +292,20 @@ void runReconstructionKernel(
     float focalLen = config.focalLength > 0 ? config.focalLength : 0.016f;
     float dispPitch = DISPLAY_PX_PITCH;
 
-    // ★追加: 逆数の事前計算
-    float invLensPitchX = 1.0f / lensPitchX;
-    float invLensPitchY = 1.0f / lensPitchY;
+    // 修正後 (設定値を優先して使用)
+    // config.elemImgPxX が 0 でないなら、その整数値を正とする
+    float elemPxX = (config.elemImgPxX > 0) ? (float)config.elemImgPxX : (lensPitchX / dispPitch);
+    float elemPxY = (config.elemImgPxY > 0) ? (float)config.elemImgPxY : (lensPitchY / dispPitch);
+
+    // レンズ数も同様に整数から計算
+    float numLensX = (float)width / elemPxX;
+    float numLensY = (float)height / elemPxY;
+    
+    // configにnumLensX等が整数で入っているならそれを使っても良いですが、
+    // ここでは解像度とピッチから整合性が取れるように計算しています。
+    // もしconfig.numLensXを信頼するなら:
+    // float numLensX = (float)config.numLensX;
+    
     float invFocalLen = 1.0f / focalLen;
 
     renderIPKernel<<<renderGrid, renderBlock>>>(
@@ -291,8 +315,9 @@ void runReconstructionKernel(
         focalLen,
         dispPitch,
         d_output,
-        // ★逆数を渡す
-        invLensPitchX, invLensPitchY, invFocalLen
+        numLensX, numLensY, // 追加引数
+        elemPxX, elemPxY,   // 追加引数
+        invFocalLen
     );
 
     cudaError_t err = cudaGetLastError();
