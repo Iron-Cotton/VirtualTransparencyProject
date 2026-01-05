@@ -4,9 +4,26 @@
 #include <glad/glad.h>
 #include "gpu_kernel.h"
 
-// グローバル変数
-static uchar4* d_outputBuffer = nullptr;        // GPU側
-static std::vector<uchar4> h_outputBuffer;      // CPU側
+// 出力画像バッファ
+static uchar4* d_outputBuffer = nullptr;
+static std::vector<uchar4> h_outputBuffer;
+
+// 点群バッファ
+static float* d_xyz = nullptr;
+static unsigned char* d_rgb = nullptr;
+static int currentCapacity = 0;
+
+// ★追加: ボクセルグリッドバッファ (Accumulation Buffer)
+// サイズ: 600 * 480 * 60
+static unsigned int* d_gridR = nullptr;
+static unsigned int* d_gridG = nullptr;
+static unsigned int* d_gridB = nullptr;
+static unsigned int* d_gridCnt = nullptr;
+
+// 定数 (gpu_kernel.cu と合わせる)
+const int VOXEL_W = 600;
+const int VOXEL_H = 480;
+const int VOXEL_D = 60;
 
 CudaReconstructor::CudaReconstructor() {}
 CudaReconstructor::~CudaReconstructor() { cleanup(); }
@@ -15,51 +32,66 @@ void CudaReconstructor::initialize(int w, int h) {
     width = w;
     height = h;
 
+    // 出力バッファ
     size_t size = width * height * sizeof(uchar4);
     cudaMalloc(&d_outputBuffer, size);
     h_outputBuffer.resize(width * height);
-    
-    // 初期値
-    std::fill(h_outputBuffer.begin(), h_outputBuffer.end(), uchar4{255, 0, 0, 255}); // 赤
+
+    // ボクセルバッファ確保
+    size_t voxelSize = VOXEL_W * VOXEL_H * VOXEL_D * sizeof(unsigned int);
+    cudaMalloc(&d_gridR, voxelSize);
+    cudaMalloc(&d_gridG, voxelSize);
+    cudaMalloc(&d_gridB, voxelSize);
+    cudaMalloc(&d_gridCnt, voxelSize);
+
+    std::cout << "[Reconstructor] Voxel Grid Allocated: " << VOXEL_W << "x" << VOXEL_H << "x" << VOXEL_D << std::endl;
 }
 
 void CudaReconstructor::cleanup() {
-    if (d_outputBuffer != nullptr) {
-        cudaFree(d_outputBuffer);
-        d_outputBuffer = nullptr;
-    }
+    if (d_outputBuffer) { cudaFree(d_outputBuffer); d_outputBuffer = nullptr; }
+    if (d_xyz) { cudaFree(d_xyz); d_xyz = nullptr; }
+    if (d_rgb) { cudaFree(d_rgb); d_rgb = nullptr; }
+    
+    if (d_gridR) { cudaFree(d_gridR); d_gridR = nullptr; }
+    if (d_gridG) { cudaFree(d_gridG); d_gridG = nullptr; }
+    if (d_gridB) { cudaFree(d_gridB); d_gridB = nullptr; }
+    if (d_gridCnt) { cudaFree(d_gridCnt); d_gridCnt = nullptr; }
 }
 
 void CudaReconstructor::process(PointCloudData& input, const AppConfig& config, unsigned int glTextureID) {
     if (!d_outputBuffer) return;
+    if (input.numPoints <= 0) return;
 
-    // 1. カーネル実行
-    runReconstructionKernel(input, config, d_outputBuffer, width, height);
+    // 1. 点群転送 (前回と同じ)
+    if (input.numPoints > currentCapacity) {
+        if (d_xyz) cudaFree(d_xyz);
+        if (d_rgb) cudaFree(d_rgb);
+        currentCapacity = input.numPoints * 1.2; // 少し余裕を持つ
+        cudaMalloc(&d_xyz, currentCapacity * 3 * sizeof(float));
+        cudaMalloc(&d_rgb, currentCapacity * 3 * sizeof(unsigned char));
+    }
+
+    cudaMemcpy(d_xyz, input.h_xyz.data(), input.numPoints * 3 * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_rgb, input.h_rgb.data(), input.numPoints * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice);
+
+    input.d_xyz = d_xyz;
+    input.d_rgb = d_rgb;
+
+    // 2. カーネル実行 (引数が増えました)
+    // ここで「ビニング」と「スライス可視化」が行われます
+    runReconstructionKernel(
+        input, config, 
+        d_gridR, d_gridG, d_gridB, d_gridCnt, // ボクセルバッファを渡す
+        d_outputBuffer, width, height
+    );
     
-    // 2. GPU -> CPU 転送
+    // 3. 結果取得
     cudaMemcpy(h_outputBuffer.data(), d_outputBuffer, 
                width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
 
-    // 3. OpenGLテクスチャ更新（ここを変更！）
-    // SubImage (部分更新) ではなく、glTexImage2D (全確保＆転送) を使う
-    // これなら「初期化されてない」というエラーは絶対に起きない
+    // 4. 表示
     glBindTexture(GL_TEXTURE_2D, glTextureID);
-    
-    // おまじない：ピクセルの整列設定を1バイト単位にする（ズレ防止）
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_outputBuffer.data());
-    
-    // エラーチェック
-    GLenum glErr = glGetError();
-    if (glErr != GL_NO_ERROR) {
-        // もしこれでもエラーならログを出す（が、恐らく消えるはず）
-        static bool printed = false;
-        if (!printed) {
-            std::cerr << "[GL Critical] Update failed: " << glErr << std::endl;
-            printed = true;
-        }
-    }
-    
     glBindTexture(GL_TEXTURE_2D, 0);
 }
