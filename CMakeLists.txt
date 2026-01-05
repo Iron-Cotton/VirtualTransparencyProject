@@ -1,19 +1,42 @@
 cmake_minimum_required(VERSION 3.10)
-
-# プロジェクト名と使用言語 (CXX = C++, CUDA = GPU)
-project(MyResearchApp LANGUAGES CXX CUDA)
+project(VirtualTransparency LANGUAGES CXX CUDA C) # C言語(glad用)も有効化
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CUDA_STANDARD 17)
 
-# ソースコードを指定 (.cpp と .cu を混ぜてOK)
-add_executable(ResearchApp 
+# 1. パッケージの検索
+find_package(OpenGL REQUIRED)
+find_package(glfw3 3.3 REQUIRED)
+find_package(glm REQUIRED)
+
+# OpenCVとRealSense (前回のおさらい)
+find_package(OpenCV REQUIRED)
+# find_package(realsense2 REQUIRED)
+
+# 2. GLADの場所を指定 (includeフォルダにヘッダがある場合)
+include_directories(include)
+
+# 3. 実行ファイルの作成
+add_executable(VirTraApp 
     src/main.cpp 
+    src/Viewer.cpp
+    src/Reconstructor.cpp    # 追加
+    src/InputSource.cpp      # (まだ中身空でもファイル作っておいてください)
+    src/Alignment.cpp        # (同上)
     src/gpu_kernel.cu
+    src/glad.c               # gl.c から変更
 )
 
-# インクルードパスの設定 (srcフォルダ内のヘッダを見れるようにする)
-target_include_directories(ResearchApp PRIVATE src)
+# ヘッダーファイルの場所を指定
+target_include_directories(VirTraApp PRIVATE include)
 
-# 必要に応じてアーキテクチャ指定 (エラーが出る場合のみコメントアウトを外す)
-# set_target_properties(ResearchApp PROPERTIES CUDA_ARCHITECTURES "native")
+# 4. ライブラリのリンク
+target_link_libraries(VirTraApp PRIVATE
+    OpenGL::GL
+    glfw
+    glm::glm
+    ${OpenCV_LIBS}
+    # realsense2::realsense2
+)
+
+# シェーダフォルダをビルドディレクトリにコピーするコマンド
+file(COPY ${CMAKE_SOURCE_DIR}/shaders DESTINATION ${CMAKE_BINARY_DIR})

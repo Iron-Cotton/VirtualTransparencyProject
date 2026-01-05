@@ -1,34 +1,60 @@
 #include <iostream>
-#include <vector>
-#include "gpu_kernel.h" // GPU関数のヘッダを読み込む
+#include <thread>
+#include <chrono>
+
+// 自作ヘッダー
+#include "Viewer.h"
+#include "InputSource.h"
+#include "Reconstructor.h"
+#include "Alignment.h"
+#include "Common.h"
 
 int main() {
-    int N = 10000; // 要素数
-    std::cout << "Running CUDA Vector Addition with " << N << " elements..." << std::endl;
+    // 1. 設定データの準備
+    AppConfig config;
+    PointCloudData pcData; // 点群データの器（今は空っぽ）
 
-    // データの準備
-    std::vector<float> h_A(N, 1.0f); // 全て 1.0
-    std::vector<float> h_B(N, 2.0f); // 全て 2.0
-    std::vector<float> h_C(N);       // 結果を入れる箱
+    // 2. 各モジュールのインスタンス化
+    GLViewer viewer;
+    CudaReconstructor reconstructor;
+    
+    // とりあえずダミーの入力ソースを使う
+    FileSource input; 
 
-    // GPU処理を実行
-    runVectorAdd(h_A, h_B, h_C);
+    // 3. 初期化処理
+    // ※ リモートデスクトップで8Kは重すぎるので、一旦HD画質でテストします
+    int width = 1280;
+    int height = 720;
 
-    // 結果の検証 (最初の5つだけ表示)
-    bool success = true;
-    for (int i = 0; i < N; ++i) {
-        if (h_C[i] != 3.0f) { // 1.0 + 2.0 = 3.0 になるはず
-            std::cerr << "Error at index " << i << ": " << h_C[i] << std::endl;
-            success = false;
-            break;
-        }
+    if (!viewer.init(width, height, "Virtual Transparency")) {
+        std::cerr << "[Error] Failed to initialize Viewer." << std::endl;
+        return -1;
     }
 
-    if (success) {
-        std::cout << "Success! (First 5 results: ";
-        for(int i=0; i<5; i++) std::cout << h_C[i] << " ";
-        std::cout << "...)" << std::endl;
+    // CUDA再構成モジュールの初期化（メモリ確保など）
+    reconstructor.initialize(width, height);
+    
+    // 入力ソースの初期化
+    input.initialize();
+
+    std::cout << "Initialization Complete. Starting Loop..." << std::endl;
+
+    // 4. メインループ
+    while (!viewer.shouldClose()) {
+        // Step A: 入力データの更新 (今は空のデータが返るだけ)
+        input.update(pcData);
+
+        // Step B: 再構成処理 (CUDAで計算 -> CPUへ転送 -> OpenGLテクスチャ更新)
+        // ここで「グラデーション」が作られます
+        reconstructor.process(pcData, config, viewer.getTextureID());
+
+        // Step C: 描画
+        viewer.draw();
+        
+        // GPU負荷軽減のため少し待機 (約60FPS)
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 
+    std::cout << "App Finished." << std::endl;
     return 0;
 }

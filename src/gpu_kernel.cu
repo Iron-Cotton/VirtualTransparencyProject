@@ -1,47 +1,38 @@
-#include <iostream>
-#include <cuda_runtime.h>
 #include "gpu_kernel.h"
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#include <cstdio>
 
-// GPUで実行されるカーネル関数 (A + B = C)
-__global__ void vectorAddKernel(const float* A, const float* B, float* C, int numElements) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i < numElements) {
-        C[i] = A[i] + B[i];
-    }
+__global__ void reconstructKernel(
+    int width, int height,
+    AppConfig config,
+    uchar4* outputBuffer // ← 変更: シンプルなポインタ
+) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= width || y >= height) return;
+
+    // 仮実装: グラデーション
+    uchar4 color;
+    color.x = (unsigned char)((float)x / width * 255.0f);
+    color.y = (unsigned char)((float)y / height * 255.0f);
+    color.z = 128;
+    color.w = 255;
+
+    // 配列への書き込み (1次元インデックス)
+    outputBuffer[y * width + x] = color;
 }
 
-// C++から呼び出されるラッパー関数 (ホスト側の処理)
-void runVectorAdd(const std::vector<float>& h_A, const std::vector<float>& h_B, std::vector<float>& h_C) {
-    int numElements = h_A.size();
-    size_t size = numElements * sizeof(float);
+// ラッパー関数
+void runReconstructionKernel(PointCloudData& data, const AppConfig& config, uchar4* d_output, int width, int height) {
+    dim3 blockSize(16, 16);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
-    // 1. GPUメモリの確保
-    float *d_A = nullptr, *d_B = nullptr, *d_C = nullptr;
-    cudaMalloc((void**)&d_A, size);
-    cudaMalloc((void**)&d_B, size);
-    cudaMalloc((void**)&d_C, size);
+    reconstructKernel<<<gridSize, blockSize>>>(width, height, config, d_output);
 
-    // 2. CPU -> GPU へデータをコピー
-    cudaMemcpy(d_A, h_A.data(), size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B.data(), size, cudaMemcpyHostToDevice);
-
-    // 3. GPUカーネルの実行
-    // (256スレッド/ブロックで計算)
-    int threadsPerBlock = 256;
-    int blocksPerGrid = (numElements + threadsPerBlock - 1) / threadsPerBlock;
-    vectorAddKernel<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, numElements);
-
-    // エラーチェック
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        std::cerr << "CUDA Error: " << cudaGetErrorString(err) << std::endl;
+        printf("CUDA Error: %s\n", cudaGetErrorString(err));
     }
-
-    // 4. GPU -> CPU へ結果をコピー
-    cudaMemcpy(h_C.data(), d_C, size, cudaMemcpyDeviceToHost);
-
-    // 5. メモリ解放
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
 }

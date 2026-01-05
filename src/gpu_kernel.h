@@ -1,5 +1,6 @@
 #pragma once
-#include <vector>
+#include "Common.h"
+#include <cuda_runtime.h>
 
-// C++のメイン関数から呼ぶための関数の宣言
-void runVectorAdd(const std::vector<float>& h_A, const std::vector<float>& h_B, std::vector<float>& h_C);
+// 引数の型を cudaArray_t から uchar4* に変更
+void runReconstructionKernel(PointCloudData& data, const AppConfig& config, uchar4* d_output, int width, int height);
