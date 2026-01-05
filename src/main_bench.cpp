@@ -92,6 +92,12 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
 
+        // ★追加: Qキーで終了
+        if (glfwGetKey(viewer.getWindow(), GLFW_KEY_Q) == GLFW_PRESS) {
+            break;
+        }
+
+
         // 60フレームごとに平均時間を表示
         if (frameCount >= 60) {
             double avgRecon = sumReconTime / frameCount;
