@@ -22,7 +22,7 @@ set(COMMON_SOURCES
     src/gpu_kernel.cu
     src/glad.c
     src/Alignment.cpp
-    # InputSourceの基底クラス実装があればここに追加
+    src/InputSource.cpp
 )
 
 # -------------------------------------------------------
@@ -48,6 +48,7 @@ target_link_libraries(AppProd PRIVATE
 add_executable(AppBench
     src/main_bench.cpp
     src/BenchmarkSource.cpp
+    src/CpuOpenGlReconstructor.cpp
     ${COMMON_SOURCES}
 )
 target_include_directories(AppBench PRIVATE include)

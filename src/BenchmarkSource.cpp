@@ -8,8 +8,8 @@ namespace {
     const float MIN_OBSERVE_Z = 1.0f;
     // ディスプレイパラメータ (本来はCommon.hやConfigから取るべきですが、ベンチマーク再現のため固定値を計算)
     const float DISPLAY_PX_PITCH = 13.4f * 0.0254f / std::sqrt(3840.f * 3840.f + 2400.f * 2400.f);
-    const int NUM_LENS_X = 40;
-    const int NUM_LENS_Y = 30;
+    const int NUM_LENS_X = 20;
+    const int NUM_LENS_Y = 20;
     const int NUM_ELEM_IMG_PX_X = 60;
     const int NUM_ELEM_IMG_PX_Y = 60;
     
