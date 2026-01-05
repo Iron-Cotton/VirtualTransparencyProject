@@ -15,27 +15,48 @@ find_package(OpenCV REQUIRED)
 # 2. GLADの場所を指定 (includeフォルダにヘッダがある場合)
 include_directories(include)
 
-# 3. 実行ファイルの作成
-add_executable(VirTraApp 
-    src/main.cpp 
+# 共通のソースファイル群
+set(COMMON_SOURCES
     src/Viewer.cpp
-    src/Reconstructor.cpp    # 追加
-    src/InputSource.cpp      # (まだ中身空でもファイル作っておいてください)
-    src/Alignment.cpp        # (同上)
+    src/Reconstructor.cpp
     src/gpu_kernel.cu
-    src/glad.c               # gl.c から変更
+    src/glad.c
+    src/Alignment.cpp
+    # InputSourceの基底クラス実装があればここに追加
 )
 
-# ヘッダーファイルの場所を指定
-target_include_directories(VirTraApp PRIVATE include)
-
-# 4. ライブラリのリンク
-target_link_libraries(VirTraApp PRIVATE
+# -------------------------------------------------------
+# 1. 本番用アプリ (Production)
+# -------------------------------------------------------
+add_executable(AppProd
+    src/main_prod.cpp
+    src/RealSenseSource.cpp
+    ${COMMON_SOURCES}
+)
+target_include_directories(AppProd PRIVATE include)
+target_link_libraries(AppProd PRIVATE
     OpenGL::GL
+    realsense2           # RealSenseは本番のみ必須
+    ${OpenCV_LIBS}       # OpenCVも必要
     glfw
     glm::glm
-    ${OpenCV_LIBS}
-    # realsense2::realsense2
+)
+
+# -------------------------------------------------------
+# 2. ベンチマーク用アプリ (Benchmark)
+# -------------------------------------------------------
+add_executable(AppBench
+    src/main_bench.cpp
+    src/BenchmarkSource.cpp
+    ${COMMON_SOURCES}
+)
+target_include_directories(AppBench PRIVATE include)
+target_link_libraries(AppBench PRIVATE
+    OpenGL::GL
+    ${OpenCV_LIBS}       # 画像読み込みに必要
+    # RealSenseはリンクしない（依存関係を減らせる）
+    glfw
+    glm::glm
 )
 
 # シェーダフォルダをビルドディレクトリにコピーするコマンド
