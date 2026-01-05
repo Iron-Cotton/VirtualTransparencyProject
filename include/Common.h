@@ -11,10 +11,18 @@ struct AppConfig {
 
     // ディスプレイ/レンズパラメータ
     float focalLength = 0.0068f; // ギャップ(m)
+
+    // レンズ数
+    int numLensX = 20;
+    int numLensY = 20;
+
+    // 要素画像の解像度
+    int elemImgPxX = 60;
+    int elemImgPxY = 60;
     
     // レンズピッチ
-    float lensPitchX = 0.001f;
-    float lensPitchY = 0.001f;
+    float lensPitchX = 0.00454f;
+    float lensPitchY = 0.00454f;
     
     // UVスケール補正
     float uvScaleX = 1.0f;
