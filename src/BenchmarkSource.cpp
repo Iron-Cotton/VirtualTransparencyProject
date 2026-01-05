@@ -1,59 +1,93 @@
 #include "BenchmarkSource.h"
-#include <opencv2/opencv.hpp>
 #include <iostream>
+#include <cmath>
+
+// 定数定義 (PCSJ2025-OpenGL-v2-3-2.cpp より移植)
+// 計算に必要な最小限のパラメータをここで再定義します
+namespace {
+    const float MIN_OBSERVE_Z = 1.0f;
+    // ディスプレイパラメータ (本来はCommon.hやConfigから取るべきですが、ベンチマーク再現のため固定値を計算)
+    const float DISPLAY_PX_PITCH = 13.4f * 0.0254f / std::sqrt(3840.f * 3840.f + 2400.f * 2400.f);
+    const int NUM_LENS_X = 40;
+    const int NUM_LENS_Y = 30;
+    const int NUM_ELEM_IMG_PX_X = 60;
+    const int NUM_ELEM_IMG_PX_Y = 60;
+    
+    const unsigned int NUM_DISPLAY_IMG_PX_Y = NUM_ELEM_IMG_PX_Y * NUM_LENS_Y;
+    const float DISPLAY_IMG_SIZE_Y = NUM_DISPLAY_IMG_PX_Y * DISPLAY_PX_PITCH;
+
+    // 被写体サイズ計算
+    const float SUBJECT_SIZE_X = DISPLAY_IMG_SIZE_Y * (1.0f + MIN_OBSERVE_Z) / MIN_OBSERVE_Z;
+    const float SUBJECT_SIZE_Y = DISPLAY_IMG_SIZE_Y * (1.0f + MIN_OBSERVE_Z) / MIN_OBSERVE_Z;
+}
+
+BenchmarkSource::BenchmarkSource() {}
+BenchmarkSource::~BenchmarkSource() {}
 
 bool BenchmarkSource::initialize() {
+    std::cout << "[Benchmark] Initializing..." << std::endl;
+
     // 1. 画像読み込み
-    cv::Mat image = cv::imread("./images/standard/parrots.bmp");
-    if (image.empty()) {
-        std::cerr << "[Benchmark] Failed to load image." << std::endl;
+    // ※ 実行ディレクトリからの相対パスに注意してください
+    cv::Mat image_input = cv::imread(IMAGE_PATH);
+    if (image_input.empty()) {
+        std::cerr << "[Benchmark] Error: 画像を開くことができませんでした: " << IMAGE_PATH << std::endl;
         return false;
     }
-    
+
     // 2. リサイズ
-    const int NUM_X = 554; // 提供コードの定数
-    const int NUM_Y = 554;
-    cv::Mat resized;
-    cv::resize(image, resized, cv::Size(NUM_X, NUM_Y), 0, 0, cv::INTER_NEAREST);
+    cv::Mat resized_image;
+    cv::resize(image_input, resized_image, cv::Size(NUM_SUBJECT_POINTS_X, NUM_SUBJECT_POINTS_Y), 0, 0, cv::INTER_NEAREST);
 
-    // 3. 点群データ生成 (CPUメモリ上に作成)
-    // 提供コードの "点群座標" "点群色情報" 生成ループをここに移植
-    int numPoints = NUM_X * NUM_Y;
+    // 3. 点群データ生成
+    int totalPoints = NUM_SUBJECT_POINTS_X * NUM_SUBJECT_POINTS_Y;
     
-    // PointCloudData への格納準備
-    cacheData.h_xyz.resize(numPoints * 3);
-    cacheData.h_rgb.resize(numPoints * 3);
-    cacheData.numPoints = numPoints;
+    // メモリ確保
+    cacheData.numPoints = totalPoints;
+    cacheData.h_xyz.resize(totalPoints * 3);
+    cacheData.h_rgb.resize(totalPoints * 3);
 
-    float SUBJECT_Z = 1.0f; // 1.0m離れた位置
+    // ピッチ計算
+    const float SUBJECT_POINTS_PITCH_X = SUBJECT_SIZE_X / static_cast<float>(NUM_SUBJECT_POINTS_X);
+    const float SUBJECT_POINTS_PITCH_Y = SUBJECT_SIZE_Y / static_cast<float>(NUM_SUBJECT_POINTS_Y);
+    const float HALF_SUBJECT_POINTS_PITCH_X = SUBJECT_POINTS_PITCH_X * 0.5f;
+    const float HALF_SUBJECT_POINTS_PITCH_Y = SUBJECT_POINTS_PITCH_Y * 0.5f;
+    const int HALF_NUM_SUBJECT_POINTS_X = NUM_SUBJECT_POINTS_X / 2;
+    const int HALF_NUM_SUBJECT_POINTS_Y = NUM_SUBJECT_POINTS_Y / 2;
 
-    // ループ処理 (提供コードより抜粋・簡略化)
     int idx = 0;
-    for (int r = 0; r < NUM_Y; ++r) {
-        for (int c = 0; c < NUM_X; ++c) {
-            // 座標計算 (平面状に配置)
-            // ... (提供コードの pointsPos 生成ロジック) ...
-            cacheData.h_xyz[idx*3 + 0] = /* x */;
-            cacheData.h_xyz[idx*3 + 1] = /* y */;
-            cacheData.h_xyz[idx*3 + 2] = SUBJECT_Z;
+    for (int r = -HALF_NUM_SUBJECT_POINTS_Y; r < HALF_NUM_SUBJECT_POINTS_Y; ++r) {
+        int row = r + HALF_NUM_SUBJECT_POINTS_Y;
+        int reverseRow = NUM_SUBJECT_POINTS_Y - 1 - row; // 画像の上下反転対応
 
-            // 色コピー (BGR -> RGB注意)
-            cv::Vec3b col = resized.at<cv::Vec3b>(NUM_Y - 1 - r, c);
-            cacheData.h_rgb[idx*3 + 0] = col[2]; // R
-            cacheData.h_rgb[idx*3 + 1] = col[1]; // G
-            cacheData.h_rgb[idx*3 + 2] = col[0]; // B
-            
+        for (int c = -HALF_NUM_SUBJECT_POINTS_X; c < HALF_NUM_SUBJECT_POINTS_X; ++c) {
+            int col = c + HALF_NUM_SUBJECT_POINTS_X;
+
+            // --- 座標計算 (XYZ) ---
+            // 提供コード: pointsPos[idx] = ...
+            cacheData.h_xyz[idx * 3 + 0] = (2.0f * (float)c + 1.0f) * HALF_SUBJECT_POINTS_PITCH_X; // X
+            cacheData.h_xyz[idx * 3 + 1] = (2.0f * (float)r + 1.0f) * HALF_SUBJECT_POINTS_PITCH_Y; // Y
+            cacheData.h_xyz[idx * 3 + 2] = SUBJECT_Z;                                              // Z
+
+            // --- 色情報 (RGB) ---
+            // OpenCVはBGR順なので、RGB順に入れ替えて格納
+            cv::Vec3b pixel = resized_image.at<cv::Vec3b>(reverseRow, col);
+            cacheData.h_rgb[idx * 3 + 0] = pixel[2]; // R
+            cacheData.h_rgb[idx * 3 + 1] = pixel[1]; // G
+            cacheData.h_rgb[idx * 3 + 2] = pixel[0]; // B
+
             idx++;
         }
     }
 
-    std::cout << "[Benchmark] Initialized with " << numPoints << " points." << std::endl;
+    std::cout << "[Benchmark] Data generated. Points: " << totalPoints << std::endl;
     return true;
 }
 
 bool BenchmarkSource::update(PointCloudData& outData) {
-    // 静止画なので、キャッシュしておいたデータをそのまま渡すだけ
-    // (ベンチマークなので、毎回コピー発生させてもよいし、ポインタだけ渡してもよい)
-    outData = cacheData; 
+    // 静的データをコピーして返す
+    // (ベンチマーク計測のため、あえてコピーコストを含めるか、参照だけ渡すかは設計次第ですが
+    //  ここでは安全性重視でコピーします)
+    outData = cacheData;
     return true;
 }
