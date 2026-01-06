@@ -21,7 +21,7 @@ bool GLViewer::init(int width, int height, const std::string& title) {
     }
 
     // バージョン指定 (OpenGL 4.6 Core)
-// バージョン指定 (OpenGL 3.3 Core に下げる)
+    // バージョン指定 (OpenGL 3.3 Core に下げる)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -42,6 +42,12 @@ bool GLViewer::init(int width, int height, const std::string& title) {
         std::cerr << "Failed to initialize GLAD" << std::endl;
         return false;
     }
+
+    // Viewer.cpp の window生成後、glew/glad初期化後に追加
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    const GLubyte* version = glGetString(GL_VERSION);
+    std::cout << "[OpenGL Info] Renderer: " << renderer << std::endl;
+    std::cout << "[OpenGL Info] Version:  " << version << std::endl;
 
     // vsyncオフ (ベンチマーク用)
     glfwSwapInterval(0);
