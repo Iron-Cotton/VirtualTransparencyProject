@@ -1,4 +1,4 @@
-#include "Viewer.h"
+#include "HeadlessContext.h" // Viewer.hの代わり
 #include "Reconstructor.h"
 #include "CpuOpenGlReconstructor.h"
 #include "BenchmarkSource.h"
@@ -8,15 +8,15 @@
 #include <cmath>
 #include <thread>
 #include <cuda_runtime.h>
+#include <glad/glad.h> // glGenTextures用に必要
 
 int main() {
     AppConfig config;
-    GLViewer viewer;
     CudaReconstructor cudaRecon;
     CpuOpenGlReconstructor cpuGlRecon;
     BenchmarkSource input;
 
-    // ★解像度: 600x600 (レンズ10x10個分)
+    // 解像度
     int width = config.numLensX * config.elemImgPxX;
     int height = config.numLensY * config.elemImgPxY;
 
@@ -27,12 +27,20 @@ int main() {
     config.focalLength = 0.0068f; 
     config.numZPlane = 60;
 
-
-    // 初期化 (600x600)
-    if (!viewer.init(width, height, "Virtual Transparency (Benchmark)")) {
-        std::cerr << "[Error] Failed to initialize Viewer." << std::endl;
+    // ★ Headless Context 初期化
+    HeadlessContext headless;
+    if (!headless.init(width, height)) {
+        std::cerr << "[Error] Failed to initialize Headless Context." << std::endl;
         return -1;
     }
+
+    // ★ ダミーテクスチャの作成
+    // (cudaRecon.processがエラーにならないように、書き込み先のテクスチャIDを用意する)
+    unsigned int dummyTexID;
+    glGenTextures(1, &dummyTexID);
+    glBindTexture(GL_TEXTURE_2D, dummyTexID);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     cudaRecon.initialize(width, height);
     cpuGlRecon.initialize(width, height);
@@ -42,20 +50,22 @@ int main() {
         return -1;
     }
 
-    std::cout << "[System] Benchmark Mode Started (600x600, 10x10)." << std::endl;
+    std::cout << "[System] Headless Benchmark Mode Started." << std::endl;
 
     int frameCount = 0;
     double sumReconTime = 0.0;
     double sumFrameTime = 0.0;
     bool useCuda = true; 
 
-    while (!viewer.shouldClose()) {
+    // ループ回数制限 (無限ループだと終われないため)
+    const int MAX_FRAMES = 3600; 
+
+    while (frameCount < MAX_FRAMES) {
         auto frameStart = std::chrono::high_resolution_clock::now();
 
         PointCloudData pcData;
         input.update(pcData);
 
-        // 120フレームごとに切り替え
         if (frameCount % 120 == 0) {
             useCuda = !useCuda;
             std::cout << "[Mode Switch] Now running: " << (useCuda ? "All-CUDA" : "CPU+OpenGL") << std::endl;
@@ -64,27 +74,20 @@ int main() {
         auto reconStart = std::chrono::high_resolution_clock::now();
 
         if (useCuda) {
-            cudaRecon.process(pcData, config, viewer.getTextureID());
+            // ★ 修正: viewer.getTextureID() -> dummyTexID
+            // 60フレームに1回だけテクスチャ更新(転送)を有効にする
+            bool doDraw = (frameCount % 60 == 0);
+            cudaRecon.process(pcData, config, dummyTexID, doDraw);
             cudaDeviceSynchronize();
         } else {
-            cpuGlRecon.process(pcData, config, viewer.getTextureID());
+            // CPU+OpenGL
+            cpuGlRecon.process(pcData, config, dummyTexID);
             glFinish();
         }
 
         auto reconEnd = std::chrono::high_resolution_clock::now();
 
-        viewer.draw();
-
-        if (glfwGetKey(viewer.getWindow(), GLFW_KEY_S) == GLFW_PRESS) {
-            if (useCuda)
-                viewer.saveTexture("../images/screenshot_cuda.bmp");
-            else
-                viewer.saveTexture("../images/screenshot_cpu_gl.bmp");
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        }
-        if (glfwGetKey(viewer.getWindow(), GLFW_KEY_Q) == GLFW_PRESS) {
-            break;
-        }
+        // viewer.draw() は削除 (Headlessなので描画しない)
 
         auto frameEnd = std::chrono::high_resolution_clock::now();
 
@@ -103,5 +106,7 @@ int main() {
             sumFrameTime = 0.0;
         }
     }
+    
+    headless.cleanup();
     return 0;
 }
