@@ -58,15 +58,15 @@ void CudaReconstructor::cleanup() {
     if (d_gridCnt) { cudaFree(d_gridCnt); d_gridCnt = nullptr; }
 }
 
-void CudaReconstructor::process(PointCloudData& input, const AppConfig& config, unsigned int glTextureID) {
+void CudaReconstructor::process(PointCloudData& input, const AppConfig& config, unsigned int glTextureID, bool updateTexture) {
     if (!d_outputBuffer) return;
     if (input.numPoints <= 0) return;
 
-    // 1. 点群転送 (前回と同じ)
+    // 1. 点群転送 (計算に必要なデータなので、これは毎回必須)
     if (input.numPoints > currentCapacity) {
         if (d_xyz) cudaFree(d_xyz);
         if (d_rgb) cudaFree(d_rgb);
-        currentCapacity = input.numPoints * 1.2; // 少し余裕を持つ
+        currentCapacity = input.numPoints * 1.2;
         cudaMalloc(&d_xyz, currentCapacity * 3 * sizeof(float));
         cudaMalloc(&d_rgb, currentCapacity * 3 * sizeof(unsigned char));
     }
@@ -77,19 +77,27 @@ void CudaReconstructor::process(PointCloudData& input, const AppConfig& config, 
     input.d_xyz = d_xyz;
     input.d_rgb = d_rgb;
 
-    // 2. カーネル実行 (引数が増えました)
-    // ここで「ビニング」と「スライス可視化」が行われます
+    // 2. カーネル実行 (ここが計測したいGPU処理の本体)
+    // 結果はGPUメモリ上の d_outputBuffer に書き込まれます
     runReconstructionKernel(
         input, config, 
-        d_gridR, d_gridG, d_gridB, d_gridCnt, // ボクセルバッファを渡す
+        d_gridR, d_gridG, d_gridB, d_gridCnt,
         d_outputBuffer, width, height
     );
     
-    // 3. 結果取得
+    // ★追加: ベンチマーク用スキップ処理
+    // updateTexture が false なら、重い転送処理を行わずにここで終了
+    if (!updateTexture) {
+        return; 
+    }
+
+    // 3. 結果取得 (GPU -> CPU)
+    // ※ RDP環境ではここが重い
     cudaMemcpy(h_outputBuffer.data(), d_outputBuffer, 
                width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
 
-    // 4. 表示
+    // 4. 表示 (CPU -> GPU/OpenGL)
+    // ※ llvmpipe環境ではここも重い
     glBindTexture(GL_TEXTURE_2D, glTextureID);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_outputBuffer.data());
