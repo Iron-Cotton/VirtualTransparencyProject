@@ -3,6 +3,10 @@ project(VirtualTransparency LANGUAGES CXX CUDA C) # C言語(glad用)も有効化
 
 set(CMAKE_CXX_STANDARD 17)
 
+set(CMAKE_CUDA_ARCHITECTURES "native")
+
+set(OpenGL_GL_PREFERENCE GLVND)
+
 # 1. パッケージの検索
 find_package(OpenMP REQUIRED)
 find_package(OpenGL REQUIRED)
@@ -11,7 +15,7 @@ find_package(glm REQUIRED)
 
 # OpenCVとRealSense (前回のおさらい)
 find_package(OpenCV REQUIRED)
-find_package(CUDA REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 # find_package(realsense2 REQUIRED)
 
 # ★追加: EGLを探す (OpenGLのコンポーネントとして探すのが現代的ですが、念のためPkgConfigも用意)
@@ -70,7 +74,7 @@ target_include_directories(AppBench PRIVATE include)
 target_link_libraries(AppBench PRIVATE
     OpenGL::GL
     OpenGL::EGL  # <--- これを追加！
-    ${CUDA_LIBRARIES}
+    CUDA::cudart
     ${OpenCV_LIBS}       # 画像読み込みに必要
     # RealSenseはリンクしない（依存関係を減らせる）
     glfw

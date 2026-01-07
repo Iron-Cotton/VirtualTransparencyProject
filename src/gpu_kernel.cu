@@ -258,68 +258,76 @@ __global__ void renderIPKernel(
     outputBuffer[v * width + u] = finalColor;
 }
 
-// ==========================================
-// ラッパー関数の更新
-// ==========================================
+// ラッパー関数の実装
 void runReconstructionKernel(
     PointCloudData& data, 
     const AppConfig& config, 
     unsigned int* d_r, unsigned int* d_g, unsigned int* d_b, unsigned int* d_cnt,
     uchar4* d_output, 
-    int width, int height
+    int width, int height,
+    ProcessTimings& timings // ★追加
 ) {
-    // 1-3. クリア & Voting (変更なし)
-    int totalVoxels = Z_PLANE_IMG_PX_X * Z_PLANE_IMG_PX_Y * NUM_Z_PLANE;
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    float ms = 0.0f;
+
+    // --- 1. Voxelization (Clear + Voting) ---
+    cudaEventRecord(start);
+
+    int totalVoxels = Z_PLANE_IMG_PX_X * Z_PLANE_IMG_PX_Y * config.numZPlane;
     int blockSize = 256;
     int gridSize = (totalVoxels + blockSize - 1) / blockSize;
+    
+    // ボクセルクリア
     clearVoxelKernel<<<gridSize, blockSize>>>(d_r, d_g, d_b, d_cnt, totalVoxels);
-    cudaDeviceSynchronize();
-
+    
+    // 投票 (点群がある場合)
     if (data.numPoints > 0) {
         int ptBlock = 256;
         int ptGrid = (data.numPoints + ptBlock - 1) / ptBlock;
         votingKernel<<<ptGrid, ptBlock>>>(data.numPoints, data.d_xyz, data.d_rgb, d_r, d_g, d_b, d_cnt);
-        cudaDeviceSynchronize();
     }
+    
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&ms, start, stop);
+    timings.voxelization = ms; // 計測結果を格納
 
-    // 4. IPレンダリング
+    // --- 2. Rendering ---
+    cudaEventRecord(start);
+
     dim3 renderBlock(16, 16);
     dim3 renderGrid((width + renderBlock.x - 1) / renderBlock.x, (height + renderBlock.y - 1) / renderBlock.y);
 
-    // パラメータ取得
-    float lensPitchX = config.lensPitchX > 0 ? config.lensPitchX : 0.001f;
-    float lensPitchY = config.lensPitchY > 0 ? config.lensPitchY : 0.001f;
-    float focalLen = config.focalLength > 0 ? config.focalLength : 0.016f;
-    float dispPitch = DISPLAY_PX_PITCH;
-
-    // 修正後 (設定値を優先して使用)
-    // config.elemImgPxX が 0 でないなら、その整数値を正とする
-    float elemPxX = (config.elemImgPxX > 0) ? (float)config.elemImgPxX : (lensPitchX / dispPitch);
-    float elemPxY = (config.elemImgPxY > 0) ? (float)config.elemImgPxY : (lensPitchY / dispPitch);
-
-    // レンズ数も同様に整数から計算
+    float dispPitch = 13.4f * 0.0254f / sqrtf(3840.f * 3840.f + 2400.f * 2400.f); // 簡易計算
+    float elemPxX = (config.elemImgPxX > 0) ? (float)config.elemImgPxX : (config.lensPitchX / dispPitch);
+    float elemPxY = (config.elemImgPxY > 0) ? (float)config.elemImgPxY : (config.lensPitchY / dispPitch);
     float numLensX = (float)width / elemPxX;
     float numLensY = (float)height / elemPxY;
-    
-    // configにnumLensX等が整数で入っているならそれを使っても良いですが、
-    // ここでは解像度とピッチから整合性が取れるように計算しています。
-    // もしconfig.numLensXを信頼するなら:
-    // float numLensX = (float)config.numLensX;
-    
-    float invFocalLen = 1.0f / focalLen;
+    float invFocalLen = 1.0f / config.focalLength;
 
     renderIPKernel<<<renderGrid, renderBlock>>>(
         d_r, d_g, d_b, d_cnt,
         width, height,
-        lensPitchX, lensPitchY,
-        focalLen,
+        config.lensPitchX, config.lensPitchY,
+        config.focalLength,
         dispPitch,
         d_output,
-        numLensX, numLensY, // 追加引数
-        elemPxX, elemPxY,   // 追加引数
+        numLensX, numLensY,
+        elemPxX, elemPxY,
         invFocalLen
     );
 
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&ms, start, stop);
+    timings.rendering = ms; // 計測結果を格納
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    
+    // エラーチェック
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) printf("CUDA Error: %s\n", cudaGetErrorString(err));
 }

@@ -30,6 +30,9 @@ int main() {
 
     std::cout << "[System] Production Mode Started." << std::endl;
 
+    // 時間計測用構造体 (追加)
+    ProcessTimings timings;
+
     // 3. メインループ
     while (!viewer.shouldClose()) {
         PointCloudData pcData;
@@ -37,8 +40,8 @@ int main() {
         // RealSenseから最新フレームを取得
         if (input.update(pcData)) {
             // 再構成処理 (点群 -> 光線再生 -> OpenGLテクスチャ)
-            // 引数: 点群データ, 設定, 書き込み先テクスチャID
-            reconstructor.process(pcData, config, viewer.getTextureID());
+            // 引数: 点群データ, 設定, 書き込み先テクスチャID, 描画更新フラグ(true), 計測結果格納先
+            reconstructor.process(pcData, config, viewer.getTextureID(), true, timings);
         }
 
         // 描画

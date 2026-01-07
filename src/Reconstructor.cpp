@@ -58,11 +58,18 @@ void CudaReconstructor::cleanup() {
     if (d_gridCnt) { cudaFree(d_gridCnt); d_gridCnt = nullptr; }
 }
 
-void CudaReconstructor::process(PointCloudData& input, const AppConfig& config, unsigned int glTextureID, bool updateTexture) {
+void CudaReconstructor::process(PointCloudData& input, const AppConfig& config, unsigned int glTextureID, bool updateTexture, ProcessTimings& timings) {
     if (!d_outputBuffer) return;
     if (input.numPoints <= 0) return;
 
-    // 1. 点群転送 (計算に必要なデータなので、これは毎回必須)
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    float ms = 0.0f;
+
+    // --- 1. 点群転送 (H2D) ---
+    cudaEventRecord(start);
+    
     if (input.numPoints > currentCapacity) {
         if (d_xyz) cudaFree(d_xyz);
         if (d_rgb) cudaFree(d_rgb);
@@ -70,36 +77,48 @@ void CudaReconstructor::process(PointCloudData& input, const AppConfig& config, 
         cudaMalloc(&d_xyz, currentCapacity * 3 * sizeof(float));
         cudaMalloc(&d_rgb, currentCapacity * 3 * sizeof(unsigned char));
     }
-
     cudaMemcpy(d_xyz, input.h_xyz.data(), input.numPoints * 3 * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_rgb, input.h_rgb.data(), input.numPoints * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice);
-
+    
+    // ポインタセット
     input.d_xyz = d_xyz;
     input.d_rgb = d_rgb;
 
-    // 2. カーネル実行 (ここが計測したいGPU処理の本体)
-    // 結果はGPUメモリ上の d_outputBuffer に書き込まれます
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&ms, start, stop);
+    timings.dataTransferH2D = ms;
+
+    // --- 2. カーネル実行 (GPU側で計測) ---
+    // ここで gpu_kernel.cu の関数を呼ぶ
     runReconstructionKernel(
         input, config, 
         d_gridR, d_gridG, d_gridB, d_gridCnt,
-        d_outputBuffer, width, height
+        d_outputBuffer, width, height,
+        timings // 参照渡し
     );
-    
-    // ★追加: ベンチマーク用スキップ処理
-    // updateTexture が false なら、重い転送処理を行わずにここで終了
-    if (!updateTexture) {
-        return; 
+
+    // --- 3. 結果書き戻し (D2H) ---
+    timings.dataTransferD2H = 0.0;
+    if (updateTexture) {
+        cudaEventRecord(start);
+        
+        // GPU -> CPU
+        cudaMemcpy(h_outputBuffer.data(), d_outputBuffer, 
+                   width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
+        
+        // CPU -> OpenGL Texture
+        glBindTexture(GL_TEXTURE_2D, glTextureID);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_outputBuffer.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&ms, start, stop);
+        timings.dataTransferD2H = ms;
     }
 
-    // 3. 結果取得 (GPU -> CPU)
-    // ※ RDP環境ではここが重い
-    cudaMemcpy(h_outputBuffer.data(), d_outputBuffer, 
-               width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
-
-    // 4. 表示 (CPU -> GPU/OpenGL)
-    // ※ llvmpipe環境ではここも重い
-    glBindTexture(GL_TEXTURE_2D, glTextureID);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_outputBuffer.data());
-    glBindTexture(GL_TEXTURE_2D, 0);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 }
