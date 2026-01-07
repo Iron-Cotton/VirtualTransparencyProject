@@ -13,11 +13,12 @@ public:
     // 終了処理
     void cleanup();
 
-// input: 点群データ
+    // input: 点群データ
     // config: パラメータ
     // glTextureID: 書き込み先のOpenGLテクスチャID
     // updateTexture: trueならOpenGLテクスチャを更新、falseなら計算のみ (デフォルトtrue)
-    void process(PointCloudData& input, const AppConfig& config, unsigned int glTextureID, bool updateTexture = true);
+    // 引数に timings を追加
+    void process(PointCloudData& input, const AppConfig& config, unsigned int glTextureID, bool updateTexture, ProcessTimings& timings);
     
 private:
     int width = 0;
