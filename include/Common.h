@@ -3,6 +3,22 @@
 #include <glm/glm.hpp>
 #include <cuda_runtime.h> // CUDAの型(uchar4など)を使うため
 
+// --- 定数定義 (CPU/GPU共通) ---
+#define Z_PLANE_IMG_PX_X 600
+#define Z_PLANE_IMG_PX_Y 480
+#define BOX_MIN_Z 0.2f
+#define BOX_DETAIL_N 3
+
+// ★追加: 処理時間の内訳 (単位: ms)
+struct ProcessTimings {
+    double totalTime = 0.0;      // 全体
+    double dataTransferH2D = 0.0;// Host -> Device (点群転送)
+    double voxelization = 0.0;   // ボクセル化 (Voting/Binning)
+    double dataTransferInter = 0.0; // 中間転送 (CPU計算結果のTextureアップロードなど)
+    double rendering = 0.0;      // レンダリング (Ray Casting)
+    double dataTransferD2H = 0.0;// Device -> Host (描画結果の書き戻し)
+};
+
 // アプリケーションの設定・状態管理（Kさんが操作し、Wさんが読む）
 struct AppConfig {
     // モード設定
@@ -13,8 +29,8 @@ struct AppConfig {
     float focalLength = 0.0068f; // ギャップ(m)
 
     // レンズ数
-    int numLensX = 20;
-    int numLensY = 20;
+    int numLensX = 128;
+    int numLensY = 80;
 
     // 要素画像の解像度
     int elemImgPxX = 60;
