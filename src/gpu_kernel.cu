@@ -1,4 +1,5 @@
 #include "gpu_kernel.h"
+#include "Common.h"
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <cstdio>
@@ -8,23 +9,17 @@
 // 定数定義 (ベンチマークコードより移植)
 // ==========================================
 // ※ GPU内で使うため定数として定義
-#define Z_PLANE_IMG_PX_X 600
-#define Z_PLANE_IMG_PX_Y 480
-#define NUM_Z_PLANE 60
-
-#define BOX_DETAIL_N 3
 #define HALF_SEARCH_BOX_SIZE (BOX_DETAIL_N / 2)
+#define HALF_Z_PLANE_IMG_PX_X (Z_PLANE_IMG_PX_X / 2)
+#define HALF_Z_PLANE_IMG_PX_Y (Z_PLANE_IMG_PX_Y / 2)
 
 // 物理定数
 #define DISPLAY_PX_PITCH (13.4f * 0.0254f / sqrtf(3840.f * 3840.f + 2400.f * 2400.f))
 #define Z_PLANE_IMG_PITCH (DISPLAY_PX_PITCH / (float)BOX_DETAIL_N)
 #define FOCAL_LENGTH 0.0068f // 仮の焦点距離 (v2-3-2-trialより)
-#define BOX_MIN_Z 0.2f
 #define COEF_TRANS (((float)NUM_Z_PLANE - 0.0f) * BOX_MIN_Z)
 
 #define F_OVER_Z_PLANE_PITCH (FOCAL_LENGTH / Z_PLANE_IMG_PITCH)
-#define HALF_Z_PLANE_IMG_PX_X (Z_PLANE_IMG_PX_X / 2)
-#define HALF_Z_PLANE_IMG_PX_Y (Z_PLANE_IMG_PX_Y / 2)
 
 // ==========================================
 // カーネル関数
