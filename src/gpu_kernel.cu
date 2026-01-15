@@ -292,7 +292,7 @@ void runReconstructionKernel(
     // --- 2. Rendering ---
     cudaEventRecord(start);
 
-    dim3 renderBlock(16, 16);
+    dim3 renderBlock(32, 8);
     dim3 renderGrid((width + renderBlock.x - 1) / renderBlock.x, (height + renderBlock.y - 1) / renderBlock.y);
 
     float dispPitch = 13.4f * 0.0254f / sqrtf(3840.f * 3840.f + 2400.f * 2400.f); // 簡易計算
